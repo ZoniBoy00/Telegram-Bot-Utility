@@ -2,6 +2,8 @@
 
 import sys
 import asyncio
+import subprocess
+import platform
 from colorama import init, Fore, Style
 
 from utils import clear_console, validate_input, print_separator
@@ -96,24 +98,58 @@ def handle_dump_history() -> None:
         forward_telegram = input(f"{Fore.CYAN}Telegram channel ID to forward to (press Enter to skip): ").strip()
         forward_discord = input(f"{Fore.CYAN}Discord webhook URL to forward to (press Enter to skip): ").strip()
         
-        print(f"\n{Fore.YELLOW}Starting bot history dumper...")
-        print(f"{Fore.YELLOW}This will create a folder with the bot ID containing all data.")
-        print(f"{Fore.YELLOW}Press Ctrl+C to stop.\n")
+        print(f"\n{Fore.YELLOW}Starting bot history dumper in a new window...")
+        print(f"{Fore.GREEN}You can continue using this menu while the dumper runs.")
+        print(f"{Fore.YELLOW}Close the dumper window or press Ctrl+C in it to stop.\n")
         
-        # Run the async function
-        asyncio.run(dump_bot_history(
-            token, 
-            listen_only=listen_only,
-            forward_to_telegram=forward_telegram if forward_telegram else None,
-            forward_to_discord=forward_discord if forward_discord else None
-        ))
+        # Prepare command line arguments
+        listen_arg = 'true' if listen_only else 'false'
+        telegram_arg = forward_telegram if forward_telegram else 'None'
+        discord_arg = forward_discord if forward_discord else 'None'
+        
+        # Detect OS and launch in appropriate way
+        system = platform.system()
+        
+        if system == 'Windows':
+            # Windows: Use 'start' command to open new CMD window
+            cmd = f'start "Bot Dumper" cmd /k python dumper_launcher.py "{token}" {listen_arg} "{telegram_arg}" "{discord_arg}"'
+            subprocess.Popen(cmd, shell=True)
+        elif system == 'Darwin':  # macOS
+            # macOS: Use 'open' with Terminal.app
+            script = f'python dumper_launcher.py "{token}" {listen_arg} "{telegram_arg}" "{discord_arg}"'
+            cmd = ['osascript', '-e', f'tell app "Terminal" to do script "{script}"']
+            subprocess.Popen(cmd)
+        else:  # Linux and others
+            # Linux: Try common terminal emulators
+            script = f'python dumper_launcher.py "{token}" {listen_arg} "{telegram_arg}" "{discord_arg}"'
+            terminals = [
+                ['gnome-terminal', '--', 'bash', '-c', f'{script}; exec bash'],
+                ['xterm', '-e', f'{script}; exec bash'],
+                ['konsole', '-e', f'{script}; exec bash'],
+                ['xfce4-terminal', '-e', f'{script}; exec bash']
+            ]
+            
+            launched = False
+            for terminal_cmd in terminals:
+                try:
+                    subprocess.Popen(terminal_cmd)
+                    launched = True
+                    break
+                except FileNotFoundError:
+                    continue
+            
+            if not launched:
+                print(f"{Fore.RED}Could not find a suitable terminal emulator.")
+                print(f"{Fore.YELLOW}Please run manually: python dumper_launcher.py \"{token}\" {listen_arg} \"{telegram_arg}\" \"{discord_arg}\"")
+                return
+        
+        print(f"{Fore.GREEN}✓ Bot dumper launched in separate window!")
         
     except ImportError:
         print(f"{Fore.RED}Telethon library is required for this feature.")
         print(f"{Fore.YELLOW}Install it with: pip install telethon")
-    except KeyboardInterrupt:
-        print(f"\n{Fore.GREEN}Bot history dumper stopped.")
-
+    except Exception as e:
+        print(f"{Fore.RED}Error launching dumper: {str(e)}")
 
 def main() -> None:
     """Main program loop showing menu and executing selected actions."""
