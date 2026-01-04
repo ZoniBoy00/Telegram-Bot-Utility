@@ -1,4 +1,6 @@
 requests
-colorama
+rich
 telethon
 PySocks
+python-dotenv
+prompt_toolkit

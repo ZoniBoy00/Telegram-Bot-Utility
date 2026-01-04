@@ -8,7 +8,6 @@ import shutil
 import zipfile
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-from colorama import Fore
 
 try:
     from telethon import TelegramClient, events
@@ -19,6 +18,7 @@ try:
         MessageService, MessageEmpty, PeerUser, PeerChat, PeerChannel,
         MessageMediaGeo, MessageMediaPhoto, MessageMediaDocument, MessageMediaContact,
         DocumentAttributeFilename, DocumentAttributeAudio, DocumentAttributeVideo,
+        DocumentAttributeAnimated, DocumentAttributeSticker,
         MessageActionChatEditPhoto
     )
     from telethon.errors.rpcerrorlist import AccessTokenExpiredError, RpcCallFailError
@@ -26,11 +26,15 @@ try:
 except ImportError:
     TELETHON_AVAILABLE = False
 
-from config import (
+from .config import (
     API_ID, API_HASH, HISTORY_DUMP_STEP, LOOKAHEAD_STEP_COUNT,
     ZIP_INTERVAL_MESSAGES, ZIP_INTERVAL_SECONDS, ZIP_CLEANUP_AFTER_SEND
 )
-from forwarder import MessageForwarder
+from .forwarder import MessageForwarder
+from rich.panel import Panel
+from rich.table import Table
+from rich.align import Align
+from .utils import console, print_header, print_success, print_error, print_warning, print_info
 
 
 class BotDumper:
@@ -80,11 +84,11 @@ class BotDumper:
             try:
                 # Use shutil.move() which is more robust than os.rename()
                 shutil.move(self.base_path, new_path)
-                print(f"{Fore.YELLOW}Existing directory renamed to: {new_path}")
+                print_warning(f"Existing directory renamed to: {new_path}")
             except (PermissionError, OSError) as e:
                 # If move fails, just use a timestamped directory name instead
-                print(f"{Fore.YELLOW}Could not rename existing directory: {str(e)}")
-                print(f"{Fore.YELLOW}Using timestamped directory name instead...")
+                print_warning(f"Could not rename existing directory: {str(e)}")
+                print_warning(f"Using timestamped directory name instead...")
                 self.base_path = new_path
             
             # Create the directory
@@ -98,7 +102,7 @@ class BotDumper:
                     try:
                         shutil.copyfile(old_session, f'{self.base_path}/{self.bot_id}.session')
                     except Exception as e:
-                        print(f"{Fore.YELLOW}Could not copy session file: {str(e)}")
+                        print_warning(f"Could not copy session file: {str(e)}")
         else:
             os.mkdir(self.base_path)
     
@@ -114,7 +118,7 @@ class BotDumper:
             os.mkdir(media_dir)
         
         # Create subdirectories for different media types
-        for subdir in ['photos', 'videos', 'documents', 'audio', 'voice']:
+        for subdir in ['photos', 'videos', 'documents', 'audio', 'voice', 'gifs', 'stickers']:
             subdir_path = os.path.join(media_dir, subdir)
             if not os.path.exists(subdir_path):
                 os.mkdir(subdir_path)
@@ -133,7 +137,7 @@ class BotDumper:
             self.bot = await TelegramClient(session_path, API_ID, API_HASH, proxy=self.proxy).start(bot_token=self.bot_token)
             self.bot.id = self.bot_id
         except AccessTokenExpiredError:
-            print(f"{Fore.RED}Token has expired!")
+            print_error("Token has expired!")
             sys.exit(1)
         
         me = await self.bot.get_me()
@@ -153,22 +157,35 @@ class BotDumper:
     @staticmethod
     def _print_bot_info(bot_info: Any) -> None:
         """Print bot information."""
-        from utils import print_header
-        print_header("Bot Information:")
-        print(f"ID: {bot_info.id}")
-        print(f"Name: {bot_info.first_name}")
-        print(f"Username: @{bot_info.username} - https://t.me/{bot_info.username}")
+        console.rule("[bold cyan]Bot Information[/]", style="blue")
+        
+        info_table = Table(box=None, show_header=False, padding=(0, 2))
+        info_table.add_column("Key", style="cyan bold", justify="right")
+        info_table.add_column("Value", style="white")
+        
+        info_table.add_row("ID", str(bot_info.id))
+        info_table.add_row("Name", bot_info.first_name)
+        info_table.add_row("Username", f"@{bot_info.username}" if bot_info.username else "None")
+        info_table.add_row("Link", f"https://t.me/{bot_info.username}" if bot_info.username else "-")
+        
+        console.print(Align.center(info_table))
     
     @staticmethod
     def _print_user_info(user_info: Any) -> None:
         """Print user information."""
-        print("="*20 + f"\nNEW USER DETECTED: {user_info.id}")
-        print(f"First name: {user_info.first_name}")
-        print(f"Last name: {user_info.last_name}")
+        console.rule(f"[bold green]NEW USER DETECTED: {user_info.id}[/]", style="green")
+        
+        user_table = Table(box=None, show_header=False, padding=(0, 2))
+        user_table.add_column("Key", style="green bold", justify="right")
+        user_table.add_column("Value", style="white")
+        
+        user_table.add_row("First Name", user_info.first_name)
+        user_table.add_row("Last Name", str(user_info.last_name))
+        user_table.add_row("Username", f"@{user_info.username}" if user_info.username else "None")
         if user_info.username:
-            print(f"Username: @{user_info.username} - https://t.me/{user_info.username}")
-        else:
-            print("User has no username")
+             user_table.add_row("Link", f"https://t.me/{user_info.username}")
+             
+        console.print(Align.center(user_table))
     
     def save_user_info(self, user: Any) -> None:
         """Save user information to disk."""
@@ -192,9 +209,9 @@ class BotDumper:
         try:
             return await coroutine
         except RpcCallFailError as e:
-            print(f"{Fore.RED}Telegram API error, {comment}: {str(e)}")
+            print_error(f"Telegram API error, {comment}: {str(e)}")
         except Exception as e:
-            print(f"{Fore.RED}Error, {comment}: {str(e)}")
+            print_error(f"Error, {comment}: {str(e)}")
         return None
     
     async def save_user_photos(self, user: Any) -> None:
@@ -211,7 +228,7 @@ class BotDumper:
             return
         
         for photo in result.photos:
-            print(f"Saving photo {photo.id}...")
+            console.print(f"[dim]Saving photo {photo.id}...[/]")
             await self.safe_api_request(
                 self.bot.download_file(photo, os.path.join(user_dir, f'{photo.id}.jpg')),
                 'download user photo'
@@ -242,11 +259,43 @@ class BotDumper:
         """Save a document from a message."""
         # Determine document type
         doc_type = 'documents'
+        
+        # Check attributes
+        is_video = False
+        is_audio = False
+        is_voice = False
+        is_animated = False
+        is_sticker = False
+        
         for attr in document.attributes:
             if isinstance(attr, DocumentAttributeAudio):
-                doc_type = 'voice' if attr.voice else 'audio'
+                is_audio = True
+                if attr.voice:
+                    is_voice = True
             elif isinstance(attr, DocumentAttributeVideo):
-                doc_type = 'videos'
+                is_video = True
+                # Check for round video (video note)
+                if attr.round_message:
+                    is_voice = False # It's a video note, treat as video (or could have separate 'round' folder)
+            elif isinstance(attr, DocumentAttributeAnimated):
+                is_animated = True
+            elif isinstance(attr, DocumentAttributeSticker):
+                is_sticker = True
+        
+        # Prioritize categorization
+        if is_sticker or document.mime_type == 'image/webp':
+            doc_type = 'stickers'
+        elif is_animated or document.mime_type == 'image/gif':
+            doc_type = 'gifs'
+        elif is_voice:
+             doc_type = 'voice'
+        elif is_audio:
+             doc_type = 'audio'
+        elif is_video:
+             doc_type = 'videos'
+             
+        # Special case: MP4s without sound that are small might be GIFs/Animations not marked as such?
+        # But stick to attributes for now.
         
         media_dir = os.path.join(self.base_path, chat_id, 'media', doc_type)
         filename = self.get_document_filename(document)
@@ -309,7 +358,7 @@ class BotDumper:
             if not messages_dict['buf']:
                 continue
             
-            print(f"{Fore.CYAN}Saving {len(messages_dict['buf'])} new messages for chat {m_chat_id}...")
+            console.print(f"[cyan]Saving {len(messages_dict['buf'])} new messages for chat {m_chat_id}...[/]")
             
             # Save text format
             text_messages = messages_dict['buf_text']
@@ -366,6 +415,8 @@ class BotDumper:
                 'documents': 0,
                 'audio': 0,
                 'voice': 0,
+                'gifs': 0,
+                'stickers': 0,
                 'locations': 0
             }
         
@@ -472,6 +523,10 @@ class BotDumper:
                     media_type = 'audio'
                 elif 'voice' in media_path:
                     media_type = 'voice'
+                elif 'gifs' in media_path:
+                    media_type = 'gifs'
+                elif 'stickers' in media_path:
+                    media_type = 'stickers'
                 else:
                     media_type = 'documents'
         else:
@@ -488,9 +543,18 @@ class BotDumper:
         # Format timestamp for better readability
         timestamp = m.date.strftime('%Y-%m-%d %H:%M:%S')
         
-        # Create text format
+        # Create text format for file
         text = f'[{chat_type}][{m.id}][{m_from_id}→{m_chat_id}][{timestamp}] {message_text}'
-        print(f"{Fore.GREEN if chat_type == 'Private' else Fore.CYAN if chat_type == 'Group' else Fore.MAGENTA}{text}")
+        
+        # Style logging for console
+        log_style = "green" if chat_type == 'Private' else "cyan" if chat_type == 'Group' else "magenta"
+        log_chat_id = f"[{log_style}]{chat_type}[/]"
+        log_ids = f"[dim]{m_from_id}→{m_chat_id}[/]"
+        log_content = f"{message_text}"
+        
+        # Use rich.table or specific columns if we were rebuilding the whole log system, 
+        # but for now, formatted text is better than raw string
+        console.print(f"[dim]{timestamp}[/] {log_chat_id} {log_ids}: {log_content}")
         
         # Create JSON format with more metadata
         json_message = {
@@ -530,7 +594,7 @@ class BotDumper:
                 await self.save_user_photos(user)
                 self.all_users[m_from_id] = user
             except Exception as e:
-                print(f"{Fore.RED}Error getting user info for {m_from_id}: {str(e)}")
+                print_error(f"Error getting user info for {m_from_id}: {str(e)}")
         
         self.save_chats_text_history()
         
@@ -545,7 +609,7 @@ class BotDumper:
             to_id: Ending message ID
             lookahead: Additional cycles to process
         """
-        print(f'{Fore.YELLOW}Dumping history from {from_id} to {to_id}... (Total processed: {self.total_messages_processed})')
+        console.print(f'[yellow]Dumping history from {from_id} to {to_id}... (Total processed: {self.total_messages_processed})[/]')
         
         messages = await self.bot(GetMessagesRequest(list(range(to_id, from_id))))
         empty_message_counter = 0
@@ -559,7 +623,7 @@ class BotDumper:
                 history_tail = False
         
         if empty_message_counter:
-            print(f'Empty messages x{empty_message_counter}')
+            console.print(f'[dim]Empty messages x{empty_message_counter}[/]')
             history_tail = True
         
         # Force save after each batch
@@ -571,26 +635,24 @@ class BotDumper:
             if lookahead:
                 return await self.get_chat_history(from_id + HISTORY_DUMP_STEP, to_id + HISTORY_DUMP_STEP, lookahead - 1)
             else:
-                print(f"{Fore.GREEN}History was fully dumped. Total messages: {self.total_messages_processed}")
+                print_success(f"History was fully dumped. Total messages: {self.total_messages_processed}")
                 self.print_final_statistics()
                 return None
     
     def print_final_statistics(self) -> None:
         """Print final statistics after dumping."""
-        print(f"\n{Fore.CYAN}{'='*50}")
-        print(f"{Fore.CYAN}DUMP STATISTICS")
-        print(f"{Fore.CYAN}{'='*50}")
-        print(f"{Fore.GREEN}Total Chats: {len(self.messages_by_chat)}")
-        print(f"{Fore.GREEN}Total Users: {len(self.all_users)}")
-        print(f"{Fore.GREEN}Total Messages: {self.total_messages_processed}")
+        console.rule("DUMP STATISTICS", style="cyan")
+        console.print(f"Total Chats: {len(self.messages_by_chat)}")
+        console.print(f"Total Users: {len(self.all_users)}")
+        console.print(f"Total Messages: {self.total_messages_processed}\n")
         
         for chat_id, stats in self.stats.items():
-            print(f"\n{Fore.YELLOW}Chat {chat_id}:")
+            console.print(f"[bold yellow]Chat {chat_id}:[/]")
             for key, value in stats.items():
                 if value > 0:
-                    print(f"  {key}: {value}")
+                    console.print(f"  {key}: {value}")
         
-        print(f"{Fore.CYAN}{'='*50}\n")
+        console.rule(style="cyan")
     
     def setup_message_listener(self) -> None:
         """Set up event listener for new messages."""
@@ -620,8 +682,7 @@ class BotDumper:
                     self.messages_since_zip[chat_id] = 0
                     self.last_zip_time[chat_id] = datetime.now()
                     
-                    print('='*50)
-                    print(f'{Fore.GREEN}NEW {chat_type.upper()} DETECTED: {chat_id}')
+                    console.rule(f"NEW {chat_type.upper()} DETECTED: {chat_id}", style="green")
                     
                     # Save chat info to JSON
                     chat_info = {
@@ -635,10 +696,10 @@ class BotDumper:
                         chat_entity = await self.bot.get_entity(int(chat_id))
                         if hasattr(chat_entity, 'title'):
                             chat_info['title'] = chat_entity.title
-                            print(f'{Fore.YELLOW}Chat Title: {chat_entity.title}')
+                            console.print(f'[yellow]Chat Title: {chat_entity.title}[/]')
                         if hasattr(chat_entity, 'username'):
                             chat_info['username'] = chat_entity.username
-                            print(f'{Fore.YELLOW}Chat Username: @{chat_entity.username}')
+                            console.print(f'[yellow]Chat Username: @{chat_entity.username}[/]')
                     except:
                         pass
                     
@@ -648,7 +709,7 @@ class BotDumper:
                     with open(chat_info_file, 'w', encoding='utf-8') as f:
                         json.dump(chat_info, f, indent=2)
                     
-                    print('='*50)
+                    console.rule(style="green")
                     
                     # Save user info if new
                     if user and user.id not in self.all_users:
@@ -662,7 +723,7 @@ class BotDumper:
                 self.save_chats_text_history(immediate=True)
                 
             except Exception as e:
-                print(f"{Fore.RED}Error in message handler: {str(e)}")
+                print_error(f"Error in message handler: {str(e)}")
                 import traceback
                 traceback.print_exc()
         
@@ -670,13 +731,13 @@ class BotDumper:
         async def handle_message_edit(event):
             try:
                 chat_id = str(event.chat_id) if event.chat_id else self.get_chat_id(event.message, self.bot.id)
-                print(f"{Fore.MAGENTA}[EDIT] Message {event.message.id} in chat {chat_id} was edited")
+                console.print(f"[magenta][EDIT] Message {event.message.id} in chat {chat_id} was edited[/]")
                 
                 # Save the edited version
                 await self.process_message(event.message)
                 self.save_chats_text_history(immediate=True)
             except Exception as e:
-                print(f"{Fore.RED}Error handling message edit: {str(e)}")
+                print_error(f"Error handling message edit: {str(e)}")
     
     def create_chat_zip(self, chat_id: str) -> Optional[str]:
         """
@@ -713,12 +774,12 @@ class BotDumper:
                         zipf.write(file_path, arcname)
             
             file_size = os.path.getsize(zip_path) / 1024  # KB
-            print(f"{Fore.CYAN}✓ Created zip archive: {zip_filename} ({file_size:.2f} KB)")
+            print_success(f"Created zip archive: {zip_filename} ({file_size:.2f} KB)")
             
             return zip_path
             
         except Exception as e:
-            print(f"{Fore.RED}Error creating zip for chat {chat_id}: {str(e)}")
+            print_error(f"Error creating zip for chat {chat_id}: {str(e)}")
             return None
     
     async def check_and_create_zips(self) -> None:
@@ -731,7 +792,7 @@ class BotDumper:
             # Check message count threshold
             if self.messages_since_zip.get(chat_id, 0) >= ZIP_INTERVAL_MESSAGES:
                 should_create_zip = True
-                print(f"{Fore.YELLOW}Chat {chat_id} reached {ZIP_INTERVAL_MESSAGES} messages, creating zip...")
+                console.print(f"[yellow]Chat {chat_id} reached {ZIP_INTERVAL_MESSAGES} messages, creating zip...[/]")
             
             # Check time threshold
             last_zip = self.last_zip_time.get(chat_id)
@@ -739,7 +800,7 @@ class BotDumper:
                 seconds_since_zip = (current_time - last_zip).total_seconds()
                 if seconds_since_zip >= ZIP_INTERVAL_SECONDS:
                     should_create_zip = True
-                    print(f"{Fore.YELLOW}Chat {chat_id} reached time threshold, creating zip...")
+                    console.print(f"[yellow]Chat {chat_id} reached time threshold, creating zip...[/]")
             elif self.messages_since_zip.get(chat_id, 0) > 0:
                 # First zip for this chat
                 should_create_zip = True
@@ -757,9 +818,9 @@ class BotDumper:
                     if ZIP_CLEANUP_AFTER_SEND:
                         try:
                             os.remove(zip_path)
-                            print(f"{Fore.CYAN}✓ Cleaned up zip file: {os.path.basename(zip_path)}")
+                            print_success(f"Cleaned up zip file: {os.path.basename(zip_path)}")
                         except Exception as e:
-                            print(f"{Fore.YELLOW}Could not delete zip file: {str(e)}")
+                            print_warning(f"Could not delete zip file: {str(e)}")
                     
                     # Reset counters
                     self.last_zip_time[chat_id] = current_time
@@ -774,7 +835,7 @@ class BotDumper:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"{Fore.RED}Error in zip creation loop: {str(e)}")
+                print_error(f"Error in zip creation loop: {str(e)}")
 
 
 async def dump_bot_history(
@@ -806,7 +867,7 @@ async def dump_bot_history(
         dumper.forwarder.setup_discord_forwarding(forward_to_discord)
     
     if listen_only:
-        print(f"{Fore.YELLOW}Bot history dumping disabled, switching to listen mode...")
+        print_warning("Bot history dumping disabled, switching to listen mode...")
     else:
         await dumper.get_chat_history(from_id=HISTORY_DUMP_STEP, to_id=0, lookahead=lookahead)
     
@@ -814,28 +875,35 @@ async def dump_bot_history(
     
     dumper.zip_task = asyncio.create_task(dumper.zip_creation_loop())
     
-    print(f"{Fore.GREEN}{'='*50}")
-    print(f"{Fore.GREEN}Listening for new messages in real-time...")
-    print(f"{Fore.GREEN}All messages will be saved immediately.")
+    console.rule("[bold green]Dumper Active[/]", style="green")
+    console.print(
+        f"[green]Listening for new messages in real-time...\n"
+        f"All messages will be saved immediately.[/]\n\n"
+        f"[yellow]IMPORTANT: For group messages to be captured, the bot must:\n"
+        f"1. Be added to the group as a member\n"
+        f"2. Have 'Privacy Mode' disabled in @BotFather[/]"
+    )
+    console.rule(style="green")
+    
     if dumper.forwarder.telegram_enabled or dumper.forwarder.discord_enabled:
-        print(f"{Fore.CYAN}Zip archives will be created and forwarded:")
-        print(f"{Fore.CYAN}  - Every {ZIP_INTERVAL_MESSAGES} messages")
-        print(f"{Fore.CYAN}  - Every {ZIP_INTERVAL_SECONDS} seconds ({ZIP_INTERVAL_SECONDS // 60} minutes)")
+        info_text = f"Zip archives will be created and forwarded:\n" \
+                    f"  - Every {ZIP_INTERVAL_MESSAGES} messages\n" \
+                    f"  - Every {ZIP_INTERVAL_SECONDS} seconds ({ZIP_INTERVAL_SECONDS // 60} minutes)\n"
         if dumper.forwarder.telegram_enabled:
-            print(f"{Fore.CYAN}  - To Telegram channel")
+            info_text += "  - To Telegram channel\n"
         if dumper.forwarder.discord_enabled:
-            print(f"{Fore.CYAN}  - To Discord webhook")
-    print(f"{Fore.YELLOW}")
-    print(f"{Fore.YELLOW}IMPORTANT: For group messages to be captured, the bot must:")
-    print(f"{Fore.YELLOW}1. Be added to the group as a member")
-    print(f"{Fore.YELLOW}2. Have 'Privacy Mode' disabled in @BotFather")
-    print(f"{Fore.YELLOW}   (Use /setprivacy command in BotFather)")
-    print(f"{Fore.YELLOW}")
-    print(f"{Fore.GREEN}Press Ctrl+C to stop.")
-    print(f"{Fore.GREEN}{'='*50}\n")
+            info_text += "  - To Discord webhook"
+        
+        console.rule("[bold cyan]Forwarding Active[/]", style="cyan")
+        console.print(info_text)
+        console.rule(style="cyan")
+        
+    console.print("\n[bold red]Press Ctrl+C to stop.[/]")
     
     try:
         await bot.run_until_disconnected()
+    except asyncio.CancelledError:
+        pass
     finally:
         if dumper.zip_task:
             dumper.zip_task.cancel()

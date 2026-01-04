@@ -1,11 +1,17 @@
 """Configuration constants for Telegram Bot Utility."""
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if it exists
+load_dotenv()
 
 # Telegram API Configuration
 TELEGRAM_API_BASE = "https://api.telegram.org/bot"
 
 # Telethon API Configuration (Get these from my.telegram.org)
-API_ID = 12345678  # Replace with your actual API ID
-API_HASH = 'abcdef1234567890abcdef1234567890'  # Replace with your actual API Hash
+# Priority: Env Var > Hardcoded Default
+API_ID = int(os.getenv('API_ID', 123456))
+API_HASH = os.getenv('API_HASH', 'your_api_hash_here')
 
 # File Type Extensions
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.bmp', '.webp')

@@ -2,12 +2,12 @@
 
 import sys
 import asyncio
-from bot_dumper import dump_bot_history
+from .dumper import dump_bot_history
 
 if __name__ == "__main__":
     # Parse command line arguments
     if len(sys.argv) < 2:
-        print("Usage: python dumper_launcher.py <bot_token> [listen_only] [telegram_channel] [discord_webhook]")
+        print("Usage: python -m core.launcher <bot_token> [listen_only] [telegram_channel] [discord_webhook]")
         sys.exit(1)
     
     bot_token = sys.argv[1]
@@ -16,9 +16,15 @@ if __name__ == "__main__":
     discord_webhook = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] != 'None' else None
     
     # Run the dumper
-    asyncio.run(dump_bot_history(
-        bot_token=bot_token,
-        listen_only=listen_only,
-        forward_to_telegram=telegram_channel,
-        forward_to_discord=discord_webhook
-    ))
+    # Run the dumper
+    try:
+        asyncio.run(dump_bot_history(
+            bot_token=bot_token,
+            listen_only=listen_only,
+            forward_to_telegram=telegram_channel,
+            forward_to_discord=discord_webhook
+        ))
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    except Exception as e:
+        print(f"Error: {e}")

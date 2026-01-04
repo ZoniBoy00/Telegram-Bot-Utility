@@ -6,7 +6,8 @@ import os
 from typing import Optional, Dict, Any
 from datetime import datetime
 import requests
-from colorama import Fore
+
+from .utils import print_success, print_error
 
 try:
     from telethon import TelegramClient
@@ -38,9 +39,12 @@ class MessageForwarder:
         # Ensure channel ID has proper format
         if not channel_id.startswith('-100'):
             channel_id = f'-100{channel_id}'
-        self.telegram_channel_id = int(channel_id)
-        self.telegram_enabled = True
-        print(f"{Fore.GREEN}✓ Telegram forwarding enabled to channel: {channel_id}")
+        try:
+            self.telegram_channel_id = int(channel_id)
+            self.telegram_enabled = True
+            print_success(f"Telegram forwarding enabled to channel: {channel_id}")
+        except ValueError:
+            print_error(f"Invalid channel ID format: {channel_id}")
     
     def setup_discord_forwarding(self, webhook_url: str) -> None:
         """
@@ -51,7 +55,7 @@ class MessageForwarder:
         """
         self.discord_webhook_url = webhook_url
         self.discord_enabled = True
-        print(f"{Fore.GREEN}✓ Discord forwarding enabled")
+        print_success("Discord forwarding enabled")
     
     async def forward_zip_to_telegram(self, zip_path: str, chat_id: str, message_count: int) -> bool:
         """
@@ -83,10 +87,10 @@ class MessageForwarder:
                 caption=caption
             )
             
-            print(f"{Fore.GREEN}✓ Sent zip file to Telegram: {os.path.basename(zip_path)}")
+            print_success(f"Sent zip file to Telegram: {os.path.basename(zip_path)}")
             return True
         except Exception as e:
-            print(f"{Fore.RED}Error forwarding zip to Telegram: {str(e)}")
+            print_error(f"Error forwarding zip to Telegram: {str(e)}")
             return False
     
     async def forward_zip_to_discord(self, zip_path: str, chat_id: str, message_count: int) -> bool:
@@ -129,27 +133,33 @@ class MessageForwarder:
                 "timestamp": datetime.utcnow().isoformat()
             }
             
-            # Send file with embed
-            with open(zip_path, 'rb') as f:
-                files = {'file': (os.path.basename(zip_path), f)}
-                payload = {'payload_json': json.dumps({"embeds": [embed]})}
-                
-                response = requests.post(
-                    self.discord_webhook_url,
-                    files=files,
-                    data=payload,
-                    timeout=30
-                )
+            # Use run_in_executor to avoid blocking the asyncio loop with requests
+            loop = asyncio.get_running_loop()
+            
+            def _send_request():
+                # Re-opening file inside the thread to be safe
+                with open(zip_path, 'rb') as f:
+                    files = {'file': (os.path.basename(zip_path), f)}
+                    payload = {'payload_json': json.dumps({"embeds": [embed]})}
+                    
+                    return requests.post(
+                        self.discord_webhook_url,
+                        files=files,
+                        data=payload,
+                        timeout=60 # Increased timeout for uploads
+                    )
+
+            response = await loop.run_in_executor(None, _send_request)
             
             if response.status_code == 200:
-                print(f"{Fore.GREEN}✓ Sent zip file to Discord: {os.path.basename(zip_path)}")
+                print_success(f"Sent zip file to Discord: {os.path.basename(zip_path)}")
                 return True
             else:
-                print(f"{Fore.RED}Discord returned status {response.status_code}")
+                print_error(f"Discord returned status {response.status_code}")
                 return False
                 
         except Exception as e:
-            print(f"{Fore.RED}Error forwarding zip to Discord: {str(e)}")
+            print_error(f"Error forwarding zip to Discord: {str(e)}")
             return False
     
     async def forward_zip_file(self, zip_path: str, chat_id: str, message_count: int) -> None:
@@ -205,7 +215,7 @@ class MessageForwarder:
             
             return True
         except Exception as e:
-            print(f"{Fore.RED}Error forwarding to Telegram: {str(e)}")
+            print_error(f"Error forwarding to Telegram: {str(e)}")
             return False
     
     async def forward_to_discord(self, message_data: Dict[str, Any], media_url: Optional[str] = None) -> bool:
@@ -230,15 +240,21 @@ class MessageForwarder:
                 "embeds": [embed]
             }
             
-            response = requests.post(
-                self.discord_webhook_url,
-                json=payload,
-                timeout=10
-            )
+            # Use run_in_executor to avoid blocking
+            loop = asyncio.get_running_loop()
+            
+            def _send_request():
+                return requests.post(
+                    self.discord_webhook_url,
+                    json=payload,
+                    timeout=10
+                )
+
+            response = await loop.run_in_executor(None, _send_request)
             
             return response.status_code == 204
         except Exception as e:
-            print(f"{Fore.RED}Error forwarding to Discord: {str(e)}")
+            print_error(f"Error forwarding to Discord: {str(e)}")
             return False
     
     def _format_telegram_message(self, message_data: Dict[str, Any]) -> str:
