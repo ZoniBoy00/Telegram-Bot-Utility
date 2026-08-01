@@ -1,0 +1,39 @@
+# --- Environment ---
+# .env.example stays tracked; anything else is a real secret file.
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# --- Logs ---
+*.log
+
+# --- OS/editor noise ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# --- Telegram session files (contain auth data) ---
+*.session
+*.session-journal
+
+# --- Bot data directories (named by bot ID) ---
+/[0-9]*/
+/[0-9]*_[0-9]*/
+
+# --- Downloaded temp media ---
+downloaded_media.bin
+*.tmp

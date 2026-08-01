@@ -67,6 +67,11 @@ Discord webhook URL: https://discord.com/api/webhooks/1234567890/abcdefghijklmno
 
 ### Message Format:
 
+**Real-time message forwarding:**
+- Every incoming message is forwarded immediately (not only archives)
+- Media files are sent to the Telegram channel with captions
+- Discord receives a formatted embed (text + metadata; media as URL only if available)
+
 **Telegram Channel:**
 - Messages are formatted with markdown
 - Includes chat type, sender ID, timestamp
@@ -76,6 +81,12 @@ Discord webhook URL: https://discord.com/api/webhooks/1234567890/abcdefghijklmno
 - Messages are sent as embeds
 - Color-coded by chat type (Blue=Private, Green=Group, Purple=Channel)
 - Includes all metadata in embed fields
+
+### Failed Deliveries:
+- Zip archives are only deleted after a **successful** send.
+- If the destination is unreachable, the archive is kept on disk (in
+  `<Bot_ID>/zips/`) so nothing is lost — upload it manually once the
+  destination is back online.
 
 ## Troubleshooting
 

@@ -1,6 +1,5 @@
-requests
-rich
-telethon
-PySocks
-python-dotenv
-prompt_toolkit
+# Convenience wrapper around pyproject.toml.
+# Install with: pip install -r requirements.txt
+# (pyproject.toml is the canonical dependency source.)
+
+-e .

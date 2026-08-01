@@ -1,125 +1,85 @@
-"""Shared utility functions for Telegram Bot Utility using Rich and prompt_toolkit."""
+"""Generic helpers: logging setup and retry logic."""
 
-import os
-import sys
-from typing import Optional, Callable, TypeVar, Any
+import logging
+import time
+from typing import Any, Callable, Optional, TypeVar
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.align import Align
-from rich.style import Style
+from .config import LOG_FILE, LOG_FILE_ENABLED, LOG_LEVEL, RETRY_BACKOFF, RETRY_COUNT
+from .ui import console
 
-# prompt_toolkit for robust input handling (fixes pasting issues on Windows)
-from prompt_toolkit import prompt
-from prompt_toolkit.formatted_text import HTML
-from prompt_toolkit.styles import Style as PromptStyle
+T = TypeVar("T")
 
-# Initialize globally accessible console
-console = Console()
 
-T = TypeVar('T')
+def get_logger(name: str) -> logging.Logger:
+    """Return a configured logger that mirrors output to console and a file."""
+    logger = logging.getLogger(name)
+    if logger.handlers:
+        return logger
 
-def clear_console() -> None:
-    """Clears the console screen."""
-    console.clear()
+    logger.setLevel(getattr(logging, LOG_LEVEL.upper(), logging.INFO))
+    formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
-def validate_input(
-    prompt_text: str,
-    expected_type: type[T] = str,
-    condition: Callable[[T], bool] = lambda x: True,
-    error_msg: str = "Invalid input.",
-    default: Any = None,
-    password: bool = False
-) -> Optional[T]:
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    if LOG_FILE_ENABLED:
+        try:
+            file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+        except OSError as e:
+            console.print(f"[yellow]Could not open log file {LOG_FILE}: {e}[/]")
+
+    logger.propagate = False
+    return logger
+
+
+def retry(
+    func: Callable[..., T],
+    *args: Any,
+    retries: int = RETRY_COUNT,
+    backoff: float = RETRY_BACKOFF,
+    base_delay: float = 1.0,
+    log: Optional[logging.Logger] = None,
+    **kwargs: Any,
+) -> T:
     """
-    Prompts user for input and validates it using prompt_toolkit for better interaction.
-    
+    Execute ``func`` with retries and exponential backoff.
+
     Args:
-        prompt_text: The prompt to display to the user
-        expected_type: The expected type of the input
-        condition: A function to validate the input
-        error_msg: Error message to display on validation failure
-        default: Default value if user presses enter
-        password: If True, hides input characters
-        
+        func: Callable to execute.
+        retries: Number of retry attempts after the first failure.
+        backoff: Multiplier applied to the delay after each failure.
+        base_delay: Initial delay in seconds before the first retry.
+        log: Optional logger for failure messages.
+
     Returns:
-        The validated user input or None if cancelled
+        The result of the first successful call.
+
+    Raises:
+        The last exception raised by ``func`` if all attempts fail.
     """
-    # Create prompt styling
-    style = PromptStyle.from_dict({
-        'prompt': 'bold #00ffff',  # Cyan
-    })
-    
-    cursor_text = " > "
-    formatted_prompt = HTML(f'<prompt>{prompt_text}</prompt>{cursor_text}')
-    
-    try:
-        while True:
-            # Use prompt_toolkit instead of rich.Prompt
-            user_input_str = prompt(
-                formatted_prompt,
-                style=style,
-                is_password=password,
-                default=str(default) if default is not None else ""
-            ).strip()
+    delay = base_delay
+    last_exc: Optional[BaseException] = None
 
-            # Handle empty input with default
-            if not user_input_str:
-                if default is not None:
-                    user_input = default
-                elif expected_type == str:
-                    user_input = "" # type: ignore
-                else:
-                    continue
-            
-            # Type conversion
-            try:
-                if user_input_str:
-                    if expected_type == int:
-                        user_input = int(user_input_str)
-                    elif expected_type == float:
-                        user_input = float(user_input_str)
-                    else:
-                        user_input = user_input_str # type: ignore
-                
-                if condition(user_input): # type: ignore
-                    return user_input # type: ignore
-                
-                console.print(f"[bold red]✗ {error_msg}[/]")
-                
-            except ValueError:
-                console.print(f"[bold red]✗ Invalid input type. Expected {expected_type.__name__}.[/]")
-            
-    except KeyboardInterrupt:
-        console.print("\n[yellow]⚠ Operation cancelled.[/]")
-        return None
+    for attempt in range(retries + 1):
+        try:
+            return func(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - we intentionally retry broadly
+            last_exc = exc
+            if attempt >= retries:
+                break
+            if log:
+                log.warning("Attempt %d/%d failed: %s. Retrying in %.1fs...",
+                            attempt + 1, retries + 1, exc, delay)
+            time.sleep(delay)
+            delay *= backoff
 
-def print_header(title: str, subtitle: str = "") -> None:
-    """Prints a formatted header using Rich Rule."""
-    console.print()
-    from rich.rule import Rule
-    rule = Rule(f"{title}", style="blue", align="center")
-    console.print(rule)
-    if subtitle:
-        console.print(f"[dim cyan]{subtitle}[/]", justify="center")
-    console.print()
-
-def print_separator() -> None:
-    """Prints a separator line."""
-    console.rule(style="blue")
-
-def print_success(message: str) -> None:
-    """Prints a success message."""
-    console.print(f"[bold green]✓ {message}[/]")
-
-def print_error(message: str) -> None:
-    """Prints an error message."""
-    console.print(f"[bold red]✗ {message}[/]")
-
-def print_warning(message: str) -> None:
-    """Prints a warning message."""
-    console.print(f"[bold yellow]! {message}[/]")
-
-def print_info(message: str) -> None:
-    """Prints an info message."""
-    console.print(f"[bold blue]i {message}[/]")
+    if log:
+        log.error("Giving up after %d attempts: %s", retries + 1, last_exc)
+    assert last_exc is not None
+    raise last_exc
