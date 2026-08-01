@@ -172,17 +172,22 @@ class TestHandleCommand(unittest.TestCase):
     def test_pause_toggles(self):
         import asyncio
 
-
         dumper = self._make_dumper()
-        # Replace the event with a real one for toggle semantics
-        dumper._paused = asyncio.Event()
-        dumper._paused.set()
 
-        asyncio.run(dumper.handle_command("p"))
-        self.assertFalse(dumper._paused.is_set())  # now paused
+        # The Event must be created inside a running loop so this works on
+        # Python 3.9 (asyncio.Event() outside a loop raises there).
+        async def scenario():
+            dumper._paused = asyncio.Event()
+            dumper._paused.set()
+            await dumper.handle_command("p")
+            paused = dumper._paused.is_set()
+            await dumper.handle_command("p")
+            resumed = dumper._paused.is_set()
+            return paused, resumed
 
-        asyncio.run(dumper.handle_command("p"))
-        self.assertTrue(dumper._paused.is_set())  # resumed
+        paused, resumed = asyncio.run(scenario())
+        self.assertFalse(paused)   # now paused
+        self.assertTrue(resumed)   # resumed
 
     def test_quit_disconnects(self):
         import asyncio
